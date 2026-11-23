@@ -24,11 +24,27 @@ String errText(String code) {
     case 'timeout': return 'Tidak ada balasan dari mesin';
     case 'arg': return 'Argumen perintah salah';
     case 'terputus': return 'Koneksi ke mesin terputus';
+    case 'order_required': return 'Scan barcode order dulu';
+    case 'motor_or_plan': return 'Motor belum dipelajari / program tidak valid';
+    case 'not_learned': return 'Jalankan Pelajari motor dulu';
     default: return code;
   }
 }
 
 String faultText(int c) => c == 1 ? 'Sensor suhu rusak' : c == 2 ? 'Suhu terlalu panas' : 'Api tidak menyala';
+
+String washerFaultText(int c) {
+  switch (c) {
+    case 1: return 'Pintu tidak terkunci';
+    case 4: return 'Beban tidak seimbang';
+    case 5: return 'Air tidak masuk';
+    case 6: return 'Air tidak keluar';
+    case 7: return 'Motor macet / Hall bermasalah';
+    case 8: return 'Motor belum dipelajari';
+    case 9: return 'Driver motor trip berulang';
+    default: return 'Error';
+  }
+}
 
 void snack(BuildContext c, String m) => ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text(m)));
 

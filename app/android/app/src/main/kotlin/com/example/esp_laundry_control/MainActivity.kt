@@ -1,4 +1,4 @@
-package com.example.esp_laundry_control
+package com.iot.laundry
 
 import io.flutter.embedding.android.FlutterActivity
 

@@ -3,10 +3,10 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'machine_link.dart';
-import 'models.dart';
+import 'theme.dart';
 import 'widgets.dart';
 
-/// Gambar knob: OFF di atas, posisi 1..9 searah jarum jam (putar kanan). Ketuk posisi untuk mengganti program.
+/// Gambar knob: OFF di atas, langkah 1..n searah jarum jam (putar kanan). Ketuk langkah untuk mengganti program.
 class KnobDial extends StatelessWidget {
   const KnobDial({super.key, required this.ring, required this.names, required this.onTapPos});
   final List<int> ring;
@@ -16,17 +16,18 @@ class KnobDial extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final th = Theme.of(context);
+    final np = ring.length + 1;
     return LayoutBuilder(builder: (context, c) {
-      final size = math.min(c.maxWidth, 380.0);
+      final size = math.min(c.maxWidth, 400.0);
       final cx = size / 2, cy = size / 2;
-      final r = size / 2 - 38;
+      final r = size / 2 - 36;
       final slots = <Widget>[];
-      for (int k = 0; k < 10; k++) {
-        final a = k * 2 * math.pi / 10;
+      for (int k = 0; k < np; k++) {
+        final a = k * 2 * math.pi / np;
         final x = cx + r * math.sin(a), y = cy - r * math.cos(a);
         final isOff = k == 0;
         slots.add(Positioned(
-          left: x - 33, top: y - 25, width: 66, height: 50,
+          left: x - 31, top: y - 24, width: 62, height: 48,
           child: Material(
             color: isOff ? th.colorScheme.errorContainer : th.colorScheme.primaryContainer,
             borderRadius: BorderRadius.circular(12),
@@ -36,10 +37,7 @@ class KnobDial extends StatelessWidget {
               child: Center(
                 child: isOff
                     ? const Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.power_settings_new, size: 18), Text('OFF', style: TextStyle(fontSize: 10))])
-                    : Padding(
-                        padding: const EdgeInsets.all(2),
-                        child: Text('$k\n${names[ring[k - 1] - 1]}', textAlign: TextAlign.center, maxLines: 3, style: const TextStyle(fontSize: 10, height: 1.1)),
-                      ),
+                    : Padding(padding: const EdgeInsets.all(2), child: Text('$k\n${names[ring[k - 1] - 1]}', textAlign: TextAlign.center, maxLines: 3, style: const TextStyle(fontSize: 9, height: 1.1))),
               ),
             ),
           ),
@@ -49,13 +47,10 @@ class KnobDial extends StatelessWidget {
         child: SizedBox(
           width: size, height: size,
           child: Stack(children: [
-            Positioned.fill(child: CustomPaint(painter: _DialPainter(th.colorScheme.outline, th.colorScheme.primary, r))),
+            Positioned.fill(child: CustomPaint(painter: _DialPainter(th.colorScheme.outline, th.colorScheme.primary, r, np))),
             Positioned(
               left: cx - 55, top: cy - 30, width: 110,
-              child: const Column(children: [
-                Icon(Icons.rotate_right, size: 36),
-                Text('putar KANAN\n= searah jarum jam', textAlign: TextAlign.center, style: TextStyle(fontSize: 11)),
-              ]),
+              child: const Column(children: [Icon(Icons.rotate_right, size: 36), Text('putar KANAN\n= searah jarum jam', textAlign: TextAlign.center, style: TextStyle(fontSize: 11))]),
             ),
             ...slots,
           ]),
@@ -66,16 +61,16 @@ class KnobDial extends StatelessWidget {
 }
 
 class _DialPainter extends CustomPainter {
-  _DialPainter(this.track, this.arrow, this.r);
+  _DialPainter(this.track, this.arrow, this.r, this.np);
   final Color track, arrow;
   final double r;
+  final int np;
 
   @override
   void paint(Canvas canvas, Size size) {
     final c = Offset(size.width / 2, size.height / 2);
     canvas.drawCircle(c, r, Paint()..color = track..style = PaintingStyle.stroke..strokeWidth = 2);
-    // panah searah jarum jam di antara OFF dan posisi 1
-    final a = math.pi / 10;
+    final a = math.pi / np;
     final p = c + Offset(r * math.sin(a), -r * math.cos(a));
     final t = Offset(math.cos(a), math.sin(a));
     final u = Offset(math.sin(a), -math.cos(a));
@@ -88,7 +83,7 @@ class _DialPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _DialPainter old) => old.track != track || old.arrow != arrow || old.r != r;
+  bool shouldRepaint(covariant _DialPainter old) => old.track != track || old.arrow != arrow || old.r != r || old.np != np;
 }
 
 class KnobPage extends StatelessWidget {
@@ -103,7 +98,7 @@ class KnobPage extends StatelessWidget {
       builder: (c) => SafeArea(
         child: ListView(shrinkWrap: true, children: [
           Padding(padding: const EdgeInsets.all(16), child: Text('Program di langkah putar $pos', style: Theme.of(c).textTheme.titleMedium)),
-          for (int id = 1; id <= 9; id++)
+          for (int id = 1; id <= names.length; id++)
             ListTile(
               title: Text(names[id - 1]),
               subtitle: ring.indexOf(id) + 1 == pos ? null : Text('sekarang di langkah ${ring.indexOf(id) + 1} (akan bertukar)'),
@@ -118,37 +113,34 @@ class KnobPage extends StatelessWidget {
     final cur = next.indexOf(chosen);
     final tmp = next[pos - 1];
     next[pos - 1] = chosen;
-    next[cur] = tmp; // tukar agar tetap permutasi 1..9
+    next[cur] = tmp; // tukar agar tetap permutasi
     m.editRing(next);
   }
 
   @override
   Widget build(BuildContext context) {
+    final p = pal(context);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Langkah knob rotary'),
-        actions: [TextButton(onPressed: () => m.editRing(kDefaultRing), child: const Text('Default'))],
+        actions: [const ThemeToggle(), TextButton(onPressed: () => m.editRing(m.schema.defRing), child: const Text('Default'))],
       ),
       body: ListenableBuilder(
         listenable: m,
         builder: (context, _) {
           final ring = m.profile.ring;
-          final names = m.profile.programs.map((p) => p.name).toList();
+          final names = m.profile.programs.map((x) => x.name).toList();
           return ListView(padding: const EdgeInsets.all(16), children: [
             SyncBanner(m),
-            const Text('Ketuk satu langkah di gambar untuk mengganti programnya. Program yang dipilih akan bertukar tempat dengan yang tadinya di langkah itu. Berlaku di mesin setelah SYNC.', style: TextStyle(fontSize: 12)),
+            Text('Ketuk satu langkah di gambar untuk mengganti programnya. Program yang dipilih bertukar tempat dengan yang tadinya di langkah itu. Berlaku di mesin setelah SYNC.', style: TextStyle(fontSize: 12, color: p.sub)),
             const SizedBox(height: 12),
             KnobDial(ring: ring, names: names, onTapPos: (pos) => _pick(context, pos)),
             const SizedBox(height: 16),
-            Text('Urutan putar kanan dari OFF', style: Theme.of(context).textTheme.titleMedium),
-            for (int k = 0; k < 9; k++)
-              ListTile(
-                dense: true,
-                leading: CircleAvatar(radius: 14, child: Text('${k + 1}', style: const TextStyle(fontSize: 12))),
-                title: Text(names[ring[k] - 1]),
-              ),
+            Text('Urutan putar kanan dari OFF', style: TextStyle(color: p.text, fontWeight: FontWeight.w700)),
+            for (int k = 0; k < ring.length; k++)
+              ListTile(dense: true, leading: CircleAvatar(radius: 14, child: Text('${k + 1}', style: const TextStyle(fontSize: 12))), title: Text(names[ring[k] - 1])),
             const SizedBox(height: 8),
-            Text('Putar kiri 1 klik dari OFF langsung ke: ${names[ring[8] - 1]}'),
+            Text('Putar kiri 1 klik dari OFF langsung ke: ${names[ring.last - 1]}', style: TextStyle(color: p.text)),
           ]);
         },
       ),

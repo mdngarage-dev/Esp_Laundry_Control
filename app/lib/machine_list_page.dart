@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
 import 'add_machine_page.dart';
+import 'app_settings_page.dart';
+import 'history.dart';
 import 'machine_link.dart';
 import 'machine_page.dart';
 import 'store.dart';
+import 'theme.dart';
 import 'ui_helpers.dart';
 
 class MachineListPage extends StatelessWidget {
@@ -17,26 +20,33 @@ class MachineListPage extends StatelessWidget {
   String _sub(MachineLink m) {
     if (m.phase == LinkPhase.connecting || m.phase == LinkPhase.authing) return 'Menghubungkan...';
     if (m.phase == LinkPhase.ready) {
-      final s = m.status;
-      if (s == null) return 'Terhubung';
-      final base = 'Terhubung  •  ${s.stateText}';
-      if (!s.running) return base;
-      return '$base  •  ${fmtTime(s.remainS)}  •  ${s.sensorOk ? '${s.temp.round()}°C' : '--'}';
+      if (!m.hasStatus) return 'Terhubung';
+      final base = 'Terhubung  •  ${m.isDryer ? m.status!.stateText : m.wstatus!.stateText}';
+      if (!m.running) return base;
+      return '$base  •  ${fmtTime(m.remainS)}';
     }
     if (m.profile.deviceId == null) return 'Belum dipasangkan ke ESP32 (mode offline)';
     return m.lastError != null ? 'Offline  •  ${m.lastError}' : 'Offline';
   }
 
   Widget _tile(BuildContext context, MachineLink m, IconData icon) {
+    final p = pal(context);
     final on = m.isReady;
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: ListTile(
-        leading: CircleAvatar(backgroundColor: on ? Colors.green.shade700 : Colors.grey.shade700, child: Icon(icon, color: Colors.white)),
-        title: Text(m.profile.name),
-        subtitle: Text(_sub(m)),
-        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-          if (m.needsSync) const Tooltip(message: 'Setting belum disinkron', child: Icon(Icons.sync_problem, color: Colors.orange)),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: NeuBox(
+        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => MachinePage(m))),
+        child: Row(children: [
+          NeuBox(circle: true, depth: 0.5, padding: const EdgeInsets.all(12), child: Icon(icon, color: on ? Colors.green : p.sub)),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(m.profile.name, style: TextStyle(color: p.text, fontWeight: FontWeight.w700, fontSize: 16)),
+              const SizedBox(height: 2),
+              Text(_sub(m), style: TextStyle(color: p.sub, fontSize: 12)),
+            ]),
+          ),
+          if (m.needsSync) const Padding(padding: EdgeInsets.only(right: 4), child: Icon(Icons.sync_problem, color: Colors.orange)),
           PopupMenuButton<String>(
             onSelected: (v) async {
               if (v == 'rename') {
@@ -55,17 +65,20 @@ class MachineListPage extends StatelessWidget {
             ],
           ),
         ]),
-        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => MachinePage(m))),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final p = pal(context);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Mesin saya'),
         actions: [
+          IconButton(tooltip: 'Riwayat order', icon: const Icon(Icons.receipt_long), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryPage()))),
+          const ThemeToggle(),
+          IconButton(tooltip: 'Tampilan', icon: const Icon(Icons.palette_outlined), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AppSettingsPage()))),
           IconButton(tooltip: 'Hubungkan ulang semua', icon: const Icon(Icons.bluetooth_searching), onPressed: store.connectAll),
         ],
       ),
@@ -85,15 +98,15 @@ class MachineListPage extends StatelessWidget {
               ),
             );
           }
-          return ListView(padding: const EdgeInsets.only(bottom: 96), children: [
+          return ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 96), children: [
             for (final t in _types)
               if (store.byType(t.$1).isNotEmpty) ...[
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                  padding: const EdgeInsets.fromLTRB(4, 12, 4, 10),
                   child: Row(children: [
-                    Icon(t.$3, size: 20),
+                    Icon(t.$3, size: 20, color: p.accent),
                     const SizedBox(width: 8),
-                    Text('${t.$2} (${store.byType(t.$1).length})', style: Theme.of(context).textTheme.titleMedium),
+                    Text('${t.$2} (${store.byType(t.$1).length})', style: TextStyle(color: p.text, fontWeight: FontWeight.w700)),
                   ]),
                 ),
                 for (final m in store.byType(t.$1)) _tile(context, m, t.$3),

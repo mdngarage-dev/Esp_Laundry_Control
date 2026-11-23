@@ -1,5 +1,5 @@
-import 'defaults.dart';
 import 'models.dart';
+import 'schema.dart';
 
 /// Data satu mesin yang disimpan di HP. params/programs/ring/name adalah DRAFT: boleh diedit offline,
 /// baru dikirim ke ESP32 saat SYNC.
@@ -14,17 +14,14 @@ class MachineProfile {
 
   MachineProfile({
     required this.id, required this.type, required this.name, this.deviceId, this.pin = '123456',
-    Map<String, String>? params, List<ProgramCfg>? programs, List<int>? ring,
-    this.dirty = false, this.fresh = false,
-  })  : params = params ?? Map<String, String>.of(kDefaultParams),
-        programs = programs ?? List<ProgramCfg>.of(kDefaultPrograms),
-        ring = ring ?? List<int>.of(kDefaultRing);
+    Map<String, String>? params, List<ProgramCfg>? programs, List<int>? ring, this.dirty = false, this.fresh = false,
+  })  : params = params ?? Map<String, String>.of(schemaOf(type).defParams),
+        programs = programs ?? schemaOf(type).defaultPrograms(),
+        ring = ring ?? List<int>.of(schemaOf(type).defRing);
 
   factory MachineProfile.create(String type, String name, {String? deviceId, String pin = '123456', bool fresh = false}) =>
-      MachineProfile(
-        id: DateTime.now().microsecondsSinceEpoch.toString(), type: type, name: name,
-        deviceId: deviceId, pin: pin, dirty: !fresh, fresh: fresh,
-      );
+      MachineProfile(id: DateTime.now().microsecondsSinceEpoch.toString(), type: type, name: name,
+          deviceId: deviceId, pin: pin, dirty: !fresh, fresh: fresh);
 
   Map<String, dynamic> toJson() => {
         'id': id, 'type': type, 'name': name, 'pin': pin, 'deviceId': deviceId, 'params': params,

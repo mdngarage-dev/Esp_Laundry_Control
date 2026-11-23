@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
-import 'defaults.dart';
+import 'schema.dart';
 import 'machine_link.dart';
 import 'store.dart';
 import 'ui_helpers.dart';

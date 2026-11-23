@@ -4,9 +4,10 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter/material.dart';
 
+import 'history.dart';
 import 'machine_link.dart';
+import 'order_service.dart';
 import 'profile.dart';
 import 'ui_helpers.dart';
 
@@ -23,7 +24,7 @@ class MachineStore extends ChangeNotifier {
 
   Future<void> load() async {
     final p = await SharedPreferences.getInstance();
-    final raw = p.getString('machines_v2');
+    final raw = p.getString('machines_v3');
     if (raw != null) {
       try {
         for (final e in jsonDecode(raw) as List) {
@@ -38,7 +39,7 @@ class MachineStore extends ChangeNotifier {
 
   Future<void> persist() async {
     final p = await SharedPreferences.getInstance();
-    await p.setString('machines_v2', jsonEncode(machines.map((m) => m.profile.toJson()).toList()));
+    await p.setString('machines_v3', jsonEncode(machines.map((m) => m.profile.toJson()).toList()));
   }
 
   MachineLink _make(MachineProfile p) {
@@ -55,14 +56,34 @@ class MachineStore extends ChangeNotifier {
     String? msg;
     switch (f[1]) {
       case 'DONE':
-        msg = '$n: pengeringan selesai';
+        final order = f.length > 2 ? f.sublist(2).join(',') : '';
+        msg = '$n: selesai${order.isEmpty ? '' : ' (order $order)'}';
+        orderLog.add(OrderEntry(order, n, l.runProg, DateTime.now()));
+        break;
+      case 'STARTED':
+        final code = f.length > 2 ? f[2] : '';
+        if (code.isNotEmpty && orders.writeStatus) {
+          orders.markProcessing(code).then((m) => messengerKey.currentState?.showSnackBar(SnackBar(content: Text('$n: $m'), duration: const Duration(seconds: 6))));
+        }
+        break;
+      case 'ORDER_REQUIRED':
+        msg = '$n: scan barcode order dulu sebelum mulai';
+        break;
+      case 'ORDER_EXPIRED':
+        msg = '$n: hasil scan barcode kedaluwarsa, scan ulang';
+        break;
+      case 'WARN':
+        msg = '$n: beban tidak seimbang, peras dengan putaran rendah';
+        break;
+      case 'LOCK_LOST':
+        msg = '$n: kunci pintu terlepas, proses dijeda';
         break;
       case 'DOOR_OPEN':
         msg = '$n: pintu terbuka, proses dijeda';
         break;
       case 'FAULT':
         final c = f.length > 2 ? int.tryParse(f[2]) ?? 0 : 0;
-        msg = '$n: ERROR E$c - ${faultText(c)}';
+        msg = '$n: ERROR E$c - ${l.isDryer ? faultText(c) : washerFaultText(c)}';
         break;
     }
     if (msg != null) {

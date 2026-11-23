@@ -1,7 +1,7 @@
 name: dryer_app
-description: Kontrol, setting, dan kalibrasi mesin dryer lewat BLE
+description: Kontrol, setting, dan kalibrasi dryer / mesin cuci lewat BLE
 publish_to: 'none'
-version: 1.0.0+1
+version: 2.0.0+1
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -12,10 +12,13 @@ dependencies:
   flutter_blue_plus: ^1.32.0   # tetap di 1.x (API di kode ini untuk 1.x)
   shared_preferences: ^2.2.0
   flutter_launcher_icons: ^0.14.3
+  mobile_scanner: ^5.2.3       # scan barcode order laundry
+
+  firebase_core: ^4.10.0 
+  cloud_firestore: ^6.5.0
 
 flutter:
   uses-material-design: true
-
 flutter_launcher_icons:
   android: "launcher_icon"
   ios: true

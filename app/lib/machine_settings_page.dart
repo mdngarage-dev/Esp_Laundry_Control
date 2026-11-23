@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 
 import 'add_machine_page.dart';
 import 'calibration_page.dart';
+import 'history.dart';
 import 'knob_page.dart';
 import 'machine_link.dart';
 import 'params_page.dart';
 import 'programs_page.dart';
 import 'store.dart';
+import 'theme.dart';
 import 'ui_helpers.dart';
+import 'washer_calib_page.dart';
 import 'widgets.dart';
 
 class MachineSettingsPage extends StatelessWidget {
@@ -16,114 +19,101 @@ class MachineSettingsPage extends StatelessWidget {
 
   void _go(BuildContext c, Widget w) => Navigator.push(c, MaterialPageRoute(builder: (_) => w));
 
+  Widget _item(BuildContext context, IconData icon, String title, String sub, VoidCallback? onTap) {
+    final p = pal(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Opacity(
+        opacity: onTap == null ? 0.45 : 1,
+        child: NeuBox(
+          onTap: onTap,
+          child: Row(children: [
+            Icon(icon, color: p.accent),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(title, style: TextStyle(color: p.text, fontWeight: FontWeight.w700)),
+                if (sub.isNotEmpty) Text(sub, style: TextStyle(color: p.sub, fontSize: 12)),
+              ]),
+            ),
+            Icon(Icons.chevron_right, color: p.sub),
+          ]),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final p = pal(context);
     return ListenableBuilder(
       listenable: m,
       builder: (context, _) {
-        final dryer = m.profile.type == 'dryer';
         final on = m.isReady;
+        final orderOn = (m.profile.params['order_req'] ?? '0') == '1';
         return Scaffold(
-          appBar: AppBar(title: Text('Pengaturan: ${m.profile.name}')),
-          body: ListView(children: [
-            Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: SyncBanner(m)),
-            ListTile(
-              leading: const Icon(Icons.edit),
-              title: const Text('Nama mesin'),
-              subtitle: Text(m.profile.name),
-              onTap: () async {
-                final t = await askText(context, 'Nama mesin', m.profile.name, number: false);
-                if (t == null) return;
-                final err = m.rename(t);
-                if (err != null && context.mounted) snack(context, err);
-              },
+          appBar: AppBar(title: Text('Pengaturan: ${m.profile.name}'), actions: const [ThemeToggle()]),
+          body: ListView(padding: const EdgeInsets.all(16), children: [
+            SyncBanner(m),
+            _item(context, Icons.edit, 'Nama mesin', m.profile.name, () async {
+              final t = await askText(context, 'Nama mesin', m.profile.name, number: false);
+              if (t == null) return;
+              final err = m.rename(t);
+              if (err != null && context.mounted) snack(context, err);
+            }),
+            _item(context, Icons.tune, 'Pengaturan umum', m.isDryer ? 'Pintu, panas dan siklus gas, STOP, waktu' : 'Pintu & kunci, sabun, air, peras, motor, waktu', () => _go(context, ParamsPage(m))),
+            _item(context, Icons.view_list, 'Program', m.isDryer ? 'Durasi, panas (suhu potong), siklus gas tiap program' : 'Waktu cuci/bilas/peras, putaran, sabun tiap program', () => _go(context, ProgramsPage(m))),
+            _item(context, Icons.rotate_right, 'Langkah knob rotary', 'Atur program apa di tiap langkah putar', () => _go(context, KnobPage(m))),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: NeuBox(
+                child: SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: Icon(Icons.qr_code_scanner, color: p.accent),
+                  title: Text('Wajib scan barcode order', style: TextStyle(color: p.text, fontWeight: FontWeight.w700)),
+                  subtitle: Text('Mesin baru bisa mulai setelah barcode struk di-scan (juga untuk tombol di mesin). Kirim ke mesin dengan SYNC.', style: TextStyle(color: p.sub, fontSize: 12)),
+                  value: orderOn,
+                  onChanged: (v) {
+                    final err = m.editParam('order_req', v ? '1' : '0');
+                    if (err != null) snack(context, err);
+                  },
+                ),
+              ),
             ),
-            if (dryer) ...[
-              const Divider(),
-              ListTile(
-                leading: const Icon(Icons.tune),
-                title: const Text('Pengaturan umum dan gas'),
-                subtitle: const Text('Pintu, keamanan, siklus gas, STOP'),
-                onTap: () => _go(context, ParamsPage(m)),
-              ),
-              ListTile(
-                leading: const Icon(Icons.view_list),
-                title: const Text('Program'),
-                subtitle: const Text('Durasi, siklus gas, suhu potong per program'),
-                onTap: () => _go(context, ProgramsPage(m)),
-              ),
-              ListTile(
-                leading: const Icon(Icons.rotate_right),
-                title: const Text('Langkah knob rotary'),
-                subtitle: const Text('Atur program apa di tiap langkah putar'),
-                onTap: () => _go(context, KnobPage(m)),
-              ),
-              const Divider(),
-              ListTile(
-                enabled: on,
-                leading: const Icon(Icons.thermostat),
-                title: const Text('Kalibrasi sensor suhu'),
-                subtitle: Text(on ? 'Offset dan beta NTC' : 'Hubungkan mesin dulu'),
-                onTap: on ? () => _go(context, CalibrationPage(m)) : null,
-              ),
-              ListTile(
-                enabled: on,
-                leading: const Icon(Icons.password),
-                title: const Text('Ganti PIN'),
-                subtitle: Text(on ? '4-6 angka, langsung disimpan di mesin' : 'Hubungkan mesin dulu'),
-                onTap: on
-                    ? () async {
-                        final t = await askText(context, 'PIN baru', '');
-                        if (t == null) return;
-                        if (!RegExp(r'^\d{4,6}$').hasMatch(t)) {
-                          if (context.mounted) snack(context, 'PIN harus 4-6 angka');
-                          return;
-                        }
-                        final err = await m.changePin(t);
-                        if (context.mounted) snack(context, err ?? 'PIN diganti dan disimpan');
-                      }
-                    : null,
-              ),
-              const Divider(),
-              ListTile(
-                leading: const Icon(Icons.restore),
-                title: const Text('Kembalikan draft ke nilai awal'),
-                subtitle: const Text('Setting, program, dan urutan knob (kalibrasi tetap). Berlaku di mesin setelah SYNC.'),
-                onTap: () async {
-                  final ok = await confirm(context, 'Kembalikan ke nilai awal?', 'Draft setting, program, dan urutan knob di app dikembalikan. Mesin belum berubah sampai SYNC.', ok: 'KEMBALIKAN');
-                  if (ok) m.resetDraft();
-                },
-              ),
-              ListTile(
-                enabled: on && m.configLoaded,
-                leading: const Icon(Icons.download),
-                title: const Text('Ambil dari mesin (buang draft)'),
-                onTap: on && m.configLoaded
-                    ? () async {
-                        final ok = await confirm(context, 'Buang draft?', 'Perubahan di app yang belum disinkron akan diganti dengan isi mesin.', ok: 'AMBIL');
-                        if (ok) m.pullFromDevice();
-                      }
-                    : null,
-              ),
-            ],
-            ListTile(
-              leading: const Icon(Icons.link),
-              title: Text(m.profile.deviceId == null ? 'Pasangkan ESP32' : 'Ganti ESP32 yang dipasangkan'),
-              subtitle: Text(m.profile.deviceId ?? 'Belum dipasangkan'),
-              onTap: () => _go(context, PairPage(m)),
-            ),
-            if (m.fwVersion.isNotEmpty) ListTile(leading: const Icon(Icons.info_outline), title: Text('Firmware ${m.fwVersion}  •  ${m.devType}')),
-            const Divider(),
-            ListTile(
-              leading: Icon(Icons.delete, color: Theme.of(context).colorScheme.error),
-              title: const Text('Hapus mesin dari aplikasi'),
-              onTap: () async {
-                final ok = await confirm(context, 'Hapus "${m.profile.name}"?', 'Setting di ESP32 tidak ikut terhapus.', ok: 'HAPUS');
-                if (!ok) return;
-                await store.remove(m);
-                if (context.mounted) Navigator.popUntil(context, (r) => r.isFirst);
-              },
-            ),
+            _item(context, Icons.receipt_long, 'Riwayat order', 'Order yang sudah selesai dikerjakan', () => _go(context, const HistoryPage())),
+            _item(context, m.isDryer ? Icons.thermostat : Icons.science, m.isDryer ? 'Kalibrasi sensor suhu' : 'Kalibrasi motor dan sabun',
+                on ? (m.isDryer ? 'Offset dan beta NTC' : 'Pelajari motor, uji putar, hitungan Hall, dosis sabun') : 'Hubungkan mesin dulu',
+                on ? () => _go(context, m.isDryer ? CalibrationPage(m) : WasherCalibPage(m)) : null),
+            _item(context, Icons.password, 'Ganti PIN', on ? '4-6 angka, langsung disimpan di mesin' : 'Hubungkan mesin dulu', on
+                ? () async {
+                    final t = await askText(context, 'PIN baru', '');
+                    if (t == null) return;
+                    if (!RegExp(r'^\d{4,6}$').hasMatch(t)) {
+                      if (context.mounted) snack(context, 'PIN harus 4-6 angka');
+                      return;
+                    }
+                    final err = await m.changePin(t);
+                    if (context.mounted) snack(context, err ?? 'PIN diganti dan disimpan');
+                  }
+                : null),
+            _item(context, Icons.restore, 'Kembalikan ke nilai awal firmware', 'Setting, program, urutan knob (kalibrasi tetap). Berlaku di mesin setelah SYNC.', () async {
+              final ok = await confirm(context, 'Kembalikan ke nilai awal?', 'Draft setting, program, dan urutan knob di app dikembalikan ke nilai awal firmware. Mesin belum berubah sampai SYNC.', ok: 'KEMBALIKAN');
+              if (ok) m.resetDraft();
+            }),
+            _item(context, Icons.download, 'Ambil dari mesin (buang draft)', on && m.configLoaded ? 'Ganti draft di app dengan isi mesin' : 'Hubungkan mesin dulu', on && m.configLoaded
+                ? () async {
+                    final ok = await confirm(context, 'Buang draft?', 'Perubahan di app yang belum disinkron akan diganti dengan isi mesin.', ok: 'AMBIL');
+                    if (ok) m.pullFromDevice();
+                  }
+                : null),
+            _item(context, Icons.link, m.profile.deviceId == null ? 'Pasangkan ESP32' : 'Ganti ESP32 yang dipasangkan', m.profile.deviceId ?? 'Belum dipasangkan', () => _go(context, PairPage(m))),
+            if (m.fwVersion.isNotEmpty) Padding(padding: const EdgeInsets.all(8), child: Text('Firmware ${m.fwVersion}  •  ${m.devType}', style: TextStyle(color: p.sub, fontSize: 12))),
+            _item(context, Icons.delete, 'Hapus mesin dari aplikasi', 'Setting di ESP32 tidak ikut terhapus', () async {
+              final ok = await confirm(context, 'Hapus "${m.profile.name}"?', 'Setting di ESP32 tidak ikut terhapus.', ok: 'HAPUS');
+              if (!ok) return;
+              await store.remove(m);
+              if (context.mounted) Navigator.popUntil(context, (r) => r.isFirst);
+            }),
           ]),
         );
       },

@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── ORDER ────────────────────────────────────────────────────────────────
+    // Baca tetap publik seperti sebelumnya (web tracking + mesin mencari order lewat nomor_pelanggan).
+    // TAMBAHAN: mesin (tanpa login) hanya boleh mengubah status "antrian" -> "proses".
+    // TODO keamanan (nanti): batasi baca publik, mis. lewat dokumen tracking terpisah tanpa no_hp.
+    match /order/{doc} {
+      allow read: if true;
+      allow create, delete: if request.auth != null;
+      allow update: if request.auth != null
+        || ( resource.data.status == 'antrian'
+             && request.resource.data.status == 'proses'
+             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']) );
+    }
+
+    // ── Publik read: dibutuhkan SEBELUM user login saat proses Sign Up
+    match /config/{doc} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    match /stores/{storeId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+
+      match /counters/{counterId} {
+        allow read, write: if request.auth != null;
+      }
+    }
+
+    // ── Semua koleksi lain (termasuk subkoleksi order/items, biaya_tambahan): butuh login
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
