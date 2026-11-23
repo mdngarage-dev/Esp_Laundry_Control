@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import 'package:flutter/material.dart';
 import 'history.dart';
 import 'machine_link.dart';
 import 'order_service.dart';
@@ -96,6 +96,15 @@ class MachineStore extends ChangeNotifier {
     machines.add(l);
     persist();
     notifyListeners();
+    return l;
+  }
+
+  MachineLink addDemo(String type, String name) {
+    final l = _make(MachineProfile.create(type, name, deviceId: 'DEMO', fresh: true));
+    machines.add(l);
+    persist();
+    notifyListeners();
+    l.connect();
     return l;
   }
 

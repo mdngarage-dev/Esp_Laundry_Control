@@ -52,6 +52,7 @@
  *   SET <kunci> <nilai>     (hanya saat mesin tidak berjalan)
  *   PSET <id> <cycles> <washMin> <rinses> <rinseMin> <spinMin> <onS> <offS> <tumbleRpm> <spinRpm> <soapS>
  *   RING <p1..p12>          urutan program di knob (permutasi 1..12); putar kanan dari OFF = p1, ..., putar kiri dari OFF = p12
+ *   ORDER <kode> / ORDERCLR  nomor order laundry (A-Z a-z 0-9 - _ ., maks 31). Jika order_req=1, program HANYA bisa mulai setelah ORDER
  *   NAME <teks>   SAVE   LOAD   DEFAULTS (PIN, nama, hasil MLEARN tetap)
  *   MLEARN                  belajar urutan fasa/Hall otomatis (drum KOSONG, mesin OFF/pilih). Hasil disimpan otomatis.
  *   MTEST <dir 0/1> <rpm 20..250> <detik 3..30>   uji putar motor
@@ -86,14 +87,14 @@
 #include "soc/gpio_reg.h"
 #include "esp_rom_sys.h"
 
-#define FW_VERSION "1.0"
+#define FW_VERSION "1.2"
 #define MACHINE_TYPE "WASHER"
 #define ENC_REVERSE 0
 #define ENC_STEPS_PER_DETENT 4
 #define OLED_ADDR 0x3C
 #define DOOR_DEBOUNCE_MS 150
 #define LVL_DEBOUNCE_MS 150
-#define CFG_MAGIC 0xC0DE0100UL
+#define CFG_MAGIC 0xC0DE0110UL
 #define NPROG 12
 #define RING_N 13                 // posisi knob: 0 = OFF, 1..12 = program
 #define PWM_FREQ 20000
@@ -110,7 +111,10 @@ static const DRAM_ATTR uint8_t HI_PIN[3] = {13, 17, 21};   // HIN U, V, W
 static const DRAM_ATTR uint8_t LO_PIN[3] = {15, 16, 22};   // LIN U, V, W
 
 // ===================== PARAMETER TETAP =====================
-const uint32_t SELECT_IDLE_MS = 60000UL, DONE_SHOW_MS = 8000UL, DOOR_RESUME_MS = 2000UL, PAUSE_TIMEOUT_MS = 600000UL;
+#define SELECT_IDLE_MS ((uint32_t)cfg.selectIdleS * 1000UL)   // semua bisa diubah dari aplikasi
+#define DONE_SHOW_MS ((uint32_t)cfg.doneShowS * 1000UL)
+#define PAUSE_TIMEOUT_MS ((uint32_t)cfg.pauseTimeoutS * 1000UL)
+const uint32_t DOOR_RESUME_MS = 2000UL;
 const uint32_t HOLD_STOP_MS = 2000UL, HOLD_EMERG_MS = 5000UL, HOLD_OFF_SELECT_MS = 1500UL;
 
 // ===================== KONFIGURASI (disimpan di flash/NVS) =====================
@@ -135,8 +139,8 @@ uint16_t totalMin(const WProg& p) { return (uint16_t)p.cycles * (p.washMin + p.r
 
 struct Cfg {
   uint32_t magic;
-  uint8_t doorAutoResume, remoteStart, soapEn, unbalRetry, unbalAbort, dirInvert, motS, motK, motOk;
-  uint16_t fillTimeout, drainTimeout, drainExtra, lockWait, hallPerRev, dutyStart, dutyMax, accel, drainRpm, balanceRpm, finishRpm, learnDuty, stallS;
+  uint8_t doorAutoResume, remoteStart, soapEn, unbalRetry, unbalAbort, dirInvert, motS, motK, motOk, orderReq, spinHiMin, spinFinMin, slowOnS, slowOffS;
+  uint16_t fillTimeout, drainTimeout, drainExtra, lockWait, hallPerRev, dutyStart, dutyMax, accel, drainRpm, balanceRpm, finishRpm, learnDuty, stallS, redistS, balHoldS, selectIdleS, pauseTimeoutS, doneShowS, orderTtlS;
   uint32_t pin;
   float kp, ki, unbalPct;
   WProg prog[NPROG];
@@ -171,6 +175,17 @@ const Param PARAMS[] = {
   {"learn_duty",   PT_U16, &cfg.learnDuty,      20, 200},
   {"dir_invert",   PT_U8,  &cfg.dirInvert,      0, 1},
   {"stall_s",      PT_U16, &cfg.stallS,         1, 10},
+  {"spin_hi_min",  PT_U8,  &cfg.spinHiMin,      4, 12},
+  {"spin_fin_min", PT_U8,  &cfg.spinFinMin,     1, 4},
+  {"redist_s",     PT_U16, &cfg.redistS,        6, 60},
+  {"bal_hold_s",   PT_U16, &cfg.balHoldS,       4, 30},
+  {"slow_on_s",    PT_U8,  &cfg.slowOnS,        3, 30},
+  {"slow_off_s",   PT_U8,  &cfg.slowOffS,       1, 15},
+  {"select_idle",  PT_U16, &cfg.selectIdleS,    30, 600},
+  {"pause_timeout",PT_U16, &cfg.pauseTimeoutS,  60, 3600},
+  {"done_show",    PT_U16, &cfg.doneShowS,      3, 60},
+  {"order_req",    PT_U8,  &cfg.orderReq,       0, 1},
+  {"order_ttl",    PT_U16, &cfg.orderTtlS,      60, 3600},
   {"mot_s",        PT_U8,  &cfg.motS,           0, 1},      // hasil MLEARN: 0 = +1, 1 = -1
   {"mot_k",        PT_U8,  &cfg.motK,           0, 5},      // hasil MLEARN
   {"mot_ok",       PT_U8,  &cfg.motOk,          0, 1},      // 1 = sudah dipelajari
@@ -201,6 +216,8 @@ void cfgDefaults() {
   cfg.fillTimeout = 60; cfg.drainTimeout = 240; cfg.drainExtra = 25; cfg.lockWait = 30; cfg.hallPerRev = 144;
   cfg.dutyStart = 60; cfg.dutyMax = 600; cfg.accel = 40; cfg.drainRpm = 40; cfg.balanceRpm = 90; cfg.finishRpm = 60;
   cfg.learnDuty = 70; cfg.stallS = 3; cfg.pin = 123456;
+  cfg.spinHiMin = 8; cfg.spinFinMin = 2; cfg.redistS = 16; cfg.balHoldS = 9; cfg.slowOnS = 8; cfg.slowOffS = 3;
+  cfg.selectIdleS = 60; cfg.pauseTimeoutS = 600; cfg.doneShowS = 8; cfg.orderReq = 0; cfg.orderTtlS = 600;
   cfg.kp = 0.8f; cfg.ki = 1.5f; cfg.unbalPct = 30.0f;
   memcpy(cfg.prog, DEF_PROGS, sizeof(DEF_PROGS));
   const uint8_t defRing[NPROG] = {1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 2};   // kanan dari OFF = 30 MINS ... kiri dari OFF = 60 MINS
@@ -211,13 +228,14 @@ bool progSane(const WProg& p) {
   if (p.cycles < 1 || p.cycles > 3 || p.rinses > 4 || p.washMin > 120 || p.rinseMin > 60 || p.soapS > 60) return false;
   if (p.washMin && p.washMin < 3) return false;
   if (p.rinses && p.rinseMin < 5) return false;
-  if (p.spinMin && (p.spinMin < 10 || p.spinMin > 40 || p.spinRpm < 100 || p.spinRpm > 1600)) return false;
+  if (p.spinMin && (p.spinMin < cfg.spinHiMin + 2 || p.spinMin > 40 || p.spinRpm < 100 || p.spinRpm > 1600)) return false;
   if (p.washMin || p.rinses) { if (p.onS < 3 || p.onS > 60 || p.offS < 1 || p.offS > 30 || p.tumbleRpm < 20 || p.tumbleRpm > 120) return false; }
   uint16_t t = totalMin(p);
   return t >= 5 && t <= 480;
 }
 bool cfgSane() {
   for (const Param& q : PARAMS) { float v = getParamVal(q); if (v < q.lo || v > q.hi) return false; }
+  if (cfg.spinFinMin + 1 >= cfg.spinHiMin) return false;
   for (int i = 0; i < NPROG; i++) if (!progSane(cfg.prog[i])) return false;
   if (cfg.name[23] != 0 || cfg.name[0] == 0) return false;
   for (int k = 0; cfg.name[k]; k++) if ((uint8_t)cfg.name[k] < 0x20 || (uint8_t)cfg.name[k] > 0x7E) return false;
@@ -283,6 +301,7 @@ uint32_t totalMs = 0, runMs = 0, lastTick = 0, stateT = 0, idleT = 0, subT = 0, 
 bool oledOn = false, lockOn = false, fillOn = false, drainOn = false, soapOn = false, sawWater = false;
 uint32_t lockOnAt = 0;
 bool doorLocked = false; uint32_t lastLowMs = 0;
+char orderNo[32] = "", dispText[48] = ""; bool orderOk = false; uint32_t orderAt = 0;   // nomor order laundry (hasil scan barcode di aplikasi)
 bool lvlRaw = false; uint32_t lvlT = 0, lastLvlLowMs = 0;
 
 const WProg& prog() { return cfg.prog[(ringIdx ? ringIdx : 1) - 1]; }
@@ -326,7 +345,6 @@ void setSoap(bool on) { if (on && !lockReady()) on = false; soapOn = on; digital
 // ===================== SENSOR PINTU (kontak terkunci) DAN LEVEL AIR =====================
 void doorSample(uint32_t now) {
   if (digitalRead(PIN_DOOR) == LOW) lastLowMs = now;
-  doorClosed_dummy: ;
   doorLocked = (now - lastLowMs) < DOOR_DEBOUNCE_MS;
 }
 void levelSample(uint32_t now) {
@@ -532,6 +550,15 @@ const char* faultLine(uint8_t c) {
     default: return "ERROR";
   }
 }
+void marquee(int y, const char* s, uint32_t now) {      // satu baris teks kecil; berjalan ke samping jika lebih lebar dari layar
+  int w = strlen(s) * 6;
+  if (w <= 128) { txt(0, y, 1, s, true); return; }
+  int total = w + 30;                                     // jeda kosong antar putaran
+  int off = (int)((now / 45) % (uint32_t)total);
+  oled.setTextSize(1); oled.setTextWrap(false);
+  oled.setCursor(-off, y); oled.print(s);
+  oled.setCursor(total - off, y); oled.print(s);
+}
 void drawUI(uint32_t now, uint32_t held) {
   char b[26]; bool big;
   oled.clearDisplay(); oled.setTextColor(SSD1306_WHITE);
@@ -548,7 +575,9 @@ void drawUI(uint32_t now, uint32_t held) {
         txtFit(16, progName());
         uint16_t m = totalMin(prog());
         if (m >= 60) sprintf(b, "%u JAM %02u MENIT", m / 60, m % 60); else sprintf(b, "%u MENIT", m);
-        txt(0, 38, 1, b, true); txt(0, 56, 1, "TEKAN = MULAI", true);
+        txt(0, 38, 1, b, true);
+        if (cfg.orderReq && !orderOk) txt(0, 56, 1, "SCAN BARCODE DI HP", true);
+        else { if (orderOk) marquee(47, dispText, now); txt(0, 56, 1, "TEKAN = MULAI", true); }
       }
       break;
     case S_RUN: case S_PAUSE_MAN: case S_PAUSE_LOCK: {
@@ -556,7 +585,8 @@ void drawUI(uint32_t now, uint32_t held) {
       if (bleConn) oled.fillCircle(78, 3, 2, SSD1306_WHITE);
       if (motorRun) { sprintf(b, "%drpm", (int)(rpmMeas + 0.5f)); txt(128 - strlen(b) * 6, 0, 1, b); }
       uint32_t rem = totalMs > runMs ? (totalMs - runMs + 999) / 1000 : 0; fmtTime(b, rem, big);
-      txt(0, 16, big ? 3 : 2, b, true);
+      if (dispText[0]) marquee(9, dispText, now);
+      txt(0, dispText[0] ? 19 : 16, big ? 3 : 2, b, true);
       if (st == S_PAUSE_LOCK) {
         if (!doorLocked) txt(0, 46, 1, "KUNCI TERLEPAS!", true);
         else if (cfg.doorAutoResume) txt(0, 46, 1, "MELANJUTKAN...", true);
@@ -589,7 +619,7 @@ void buildPlan() {
   for (uint8_t c = 0; c < p.cycles; c++) {
     if (p.washMin) add(SG_WASH, p.washMin);
     for (uint8_t r = 0; r < p.rinses; r++) add(SG_RINSE, p.rinseMin);
-    if (p.spinMin) { add(SG_SDRAIN, p.spinMin - 8); add(SG_SHIGH, 6); add(SG_SFIN, 2); }
+    if (p.spinMin) { add(SG_SDRAIN, p.spinMin - cfg.spinHiMin); add(SG_SHIGH, cfg.spinHiMin - cfg.spinFinMin); add(SG_SFIN, cfg.spinFinMin); }
   }
   totalMs = t; planI = 0;
 }
@@ -660,13 +690,13 @@ void spinTick(uint32_t now) {
     case SB_BAL:
       if (!motorRun) { if (!motorStopped()) break; motorStart(0, cfg.balanceRpm); rippleClear(); subT = now; }
       if (now - subT > 60000UL) { unbalFail(now); break; }                      // tidak bisa mencapai putaran seimbang (beban terlalu berat)
-      if (now - subT > 9000UL && rpmMeas > cfg.balanceRpm * 0.8f) {
+      if (now - subT > (uint32_t)cfg.balHoldS * 1000UL && rpmMeas > cfg.balanceRpm * 0.8f) {
         if (ripplePct() <= cfg.unbalPct) beginSub(SB_RAMP, now); else unbalFail(now);
       }
       break;
     case SB_REDIST:
       tumbleTick(now, 50, 5, 2);
-      if (now - subT > 16000UL) { motorStop(); beginSub(SB_BAL, now); }
+      if (now - subT > (uint32_t)cfg.redistS * 1000UL) { motorStop(); beginSub(SB_BAL, now); }
       break;
     case SB_RAMP: case SB_HOLD: {
       float tgt = spinLimit;
@@ -701,7 +731,7 @@ void washTick(uint32_t now) {
       break;
     case SB_TUMBLE: tumbleTick(now, p.tumbleRpm, p.onS, p.offS); break;
     case SB_DRAIN:
-      if (plan[planI].type == SG_SDRAIN) tumbleTick(now, (uint8_t)cfg.drainRpm, 8, 3);
+      if (plan[planI].type == SG_SDRAIN) tumbleTick(now, (uint8_t)cfg.drainRpm, cfg.slowOnS, cfg.slowOffS);
       if (levelEmptyStable(now, 1500)) {
         if (!emptySince) emptySince = now;
         if (now - emptySince >= (uint32_t)cfg.drainExtra * 1000UL) {
@@ -711,21 +741,22 @@ void washTick(uint32_t now) {
       } else emptySince = 0;
       if (sub == SB_DRAIN && now - drainT0 > (uint32_t)cfg.drainTimeout * 1000UL) doFault(6);
       break;
-    case SB_DRAINWAIT: tumbleTick(now, (uint8_t)cfg.drainRpm, 8, 3); break;
+    case SB_DRAINWAIT: tumbleTick(now, (uint8_t)cfg.drainRpm, cfg.slowOnS, cfg.slowOffS); break;
     default: spinTick(now); break;
   }
 }
 
 // ===================== TRANSISI =====================
 void allOff() { motorStop(); setFill(false); setDrain(false); setSoap(false); setLock(false); sub = SB_NONE; }
-void goOff() { allOff(); beepStop(); st = S_OFF; oledPower(false); }
-void emergencyOff() { allOff(); beepStop(); BEEP(P_EMERG); st = S_OFF; oledPower(false); }
+void goOff() { allOff(); beepStop(); st = S_OFF; oledPower(false); orderOk = false; orderNo[0] = 0; dispText[0] = 0; }
+void emergencyOff() { allOff(); beepStop(); BEEP(P_EMERG); st = S_OFF; oledPower(false); orderOk = false; orderNo[0] = 0; dispText[0] = 0; }
 void powerOn(uint32_t now) { st = S_SELECT; idleT = now; oledPower(true); }
 void doFault(uint8_t code) {
   motorStop(); setFill(false); setSoap(false); setDrain(false);
   faultCode = code; st = S_FAULT; stateT = millis(); BEEP(P_FAULT); txPush("E,FAULT,%u", code);
 }
 bool startRun(uint32_t now) {
+  if (cfg.orderReq && !orderOk) { BEEP(P_NO); txPush("E,ORDER_REQUIRED"); return false; }   // wajib scan barcode order dulu
   if (!cfg.motOk) { doFault(8); return false; }
   buildPlan();
   if (planN == 0) { BEEP(P_NO); return false; }
@@ -750,7 +781,7 @@ void stopAndDrain(uint32_t now) {
 }
 void finishRun(uint32_t now) {
   motorStop(); setFill(false); setSoap(false); setDrain(false);
-  st = S_DONE; stateT = now; beepStop(); BEEP(P_DONE); txPush("E,DONE");
+  st = S_DONE; stateT = now; beepStop(); BEEP(P_DONE); txPush("E,DONE,%s", orderNo); orderOk = false;
 }
 
 // ===================== INPUT =====================
@@ -902,6 +933,7 @@ void sendMotor() {
   txPush("M,%d,%d,%lu,%u,%d,%u", (int)(rpmMeas * 10.0f), (int)dutyNow, (unsigned long)hallEdges, (unsigned)readHall(),
          (int)(ripplePct() * 10.0f), (unsigned)(digitalRead(PIN_FAULT) == HIGH));
 }
+void sendOrder() { txPush("O,%u,%s", (unsigned)orderOk, orderNo); }
 void sendCfg() {
   txPush("V,%s,%s", FW_VERSION, MACHINE_TYPE);
   for (const Param& q : PARAMS) {
@@ -914,6 +946,7 @@ void sendCfg() {
            (unsigned)p.rinseMin, (unsigned)p.spinMin, (unsigned)p.onS, (unsigned)p.offS, (unsigned)p.tumbleRpm, (unsigned)p.spinRpm, (unsigned)p.soapS);
   }
   txPush("N,%s", cfg.name);
+  sendOrder();
   txPush("R,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u", cfg.ring[0], cfg.ring[1], cfg.ring[2], cfg.ring[3], cfg.ring[4], cfg.ring[5],
          cfg.ring[6], cfg.ring[7], cfg.ring[8], cfg.ring[9], cfg.ring[10], cfg.ring[11]);   // R = akhir dump setting
   sendStatus(); sendMotor();
@@ -960,7 +993,7 @@ void handleCmd(char* line, uint32_t now) {
   if (!strcmp(cmd, "START")) {
     if (!cfg.remoteStart) { er(cmd, "remote_start_off"); return; }
     if (st != S_SELECT || ringIdx == 0) { er(cmd, "not_selected"); return; }
-    if (startRun(now)) ok(cmd); else er(cmd, "motor_or_plan");
+    if (startRun(now)) ok(cmd); else er(cmd, (cfg.orderReq && !orderOk) ? "order_required" : "motor_or_plan");
     return;
   }
   if (!strcmp(cmd, "PAUSE")) { if (st == S_RUN) { pauseRun(S_PAUSE_MAN, now); ok(cmd); } else er(cmd, "state"); return; }
@@ -992,6 +1025,18 @@ void handleCmd(char* line, uint32_t now) {
     if (!cfgSane()) { cfg.prog[i - 1] = old; er(cmd, "constraint"); return; }
     cfgDirty = true; ok(cmd); return;
   }
+  if (!strcmp(cmd, "ORDER")) {
+    if (n < 1 || strlen(tok[0]) > 31) { er(cmd, "arg"); return; }
+    if (!(st == S_OFF || st == S_SELECT)) { er(cmd, "busy"); return; }
+    for (const char* c = tok[0]; *c; c++) if (!isalnum((unsigned char)*c) && *c != '-' && *c != '_' && *c != '.') { er(cmd, "arg"); return; }
+    strncpy(orderNo, tok[0], 31); orderNo[31] = 0; orderOk = true; orderAt = now;
+    dispText[0] = 0;                                       // teks layar = sisa argumen (mis. nama pelanggan); kosong -> nomor order saja
+    for (int k = 1; k < n; k++) { if (k > 1 && strlen(dispText) < 46) strcat(dispText, " "); strncat(dispText, tok[k], 47 - strlen(dispText)); }
+    if (!dispText[0]) strncpy(dispText, orderNo, 47);
+    for (char* c = dispText; *c; c++) if ((uint8_t)*c < 0x20 || (uint8_t)*c > 0x7E) *c = '?';
+    ok(cmd); sendOrder(); return;
+  }
+  if (!strcmp(cmd, "ORDERCLR")) { orderOk = false; orderNo[0] = 0; dispText[0] = 0; ok(cmd); sendOrder(); return; }
   if (!strcmp(cmd, "RING")) {
     if (n < NPROG) { er(cmd, "arg"); return; }
     if (!idleState()) { er(cmd, "busy"); return; }
@@ -1064,7 +1109,7 @@ void bleTick(uint32_t now) {
   while (rxPop(line)) handleCmd(line, now);
   if (needAdv && now - advAt > 300) { needAdv = false; BLEDevice::startAdvertising(); }
   static uint32_t tS = 0; static uint8_t lastSt = 255;
-  if (bleConn && ((uint8_t)st != lastSt || now - tS >= 1000)) { tS = now; sendStatus(); sendMotor(); }
+  if (bleConn && ((uint8_t)st != lastSt || now - tS >= 1000)) { tS = now; sendStatus(); sendMotor(); sendOrder(); }
   lastSt = (uint8_t)st;
   txPump(now);
 }
@@ -1176,6 +1221,7 @@ void loop() {
   }
   if (st == S_TEST) testTick(now);
   if (st == S_SELECT && now - idleT >= SELECT_IDLE_MS) { BEEP(P_PRESS); goOff(); }
+  if (orderOk && (st == S_OFF || st == S_SELECT) && now - orderAt > (uint32_t)cfg.orderTtlS * 1000UL) { orderOk = false; orderNo[0] = 0; dispText[0] = 0; txPush("E,ORDER_EXPIRED"); }
 
   // ---- pengaman umum ----
   if (!doorLocked) { if (fillOn) setFill(false); if (soapOn && st != S_TEST) setSoap(false); if (motorRun) motorStop(); }

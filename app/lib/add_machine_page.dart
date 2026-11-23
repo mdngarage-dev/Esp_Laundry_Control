@@ -134,6 +134,19 @@ class _AddMachinePageState extends State<AddMachinePage> {
           label: const Text('Simpan tanpa ESP32 (atur setting dulu, hubungkan nanti)'),
         ),
         const Divider(height: 32),
+        OutlinedButton.icon(
+          onPressed: binding
+              ? null
+              : () {
+                  final n = _validName();
+                  if (n == null) return;
+                  store.addDemo(type, n);
+                  Navigator.pop(context);
+                },
+          icon: const Icon(Icons.science),
+          label: const Text('Tambah mesin DEMO (simulasi, tanpa ESP32)'),
+        ),
+        const Divider(height: 32),
         const Text('Atau hubungkan ESP32 sekarang'),
         const SizedBox(height: 8),
         if (binding) const Padding(padding: EdgeInsets.all(8), child: LinearProgressIndicator()),

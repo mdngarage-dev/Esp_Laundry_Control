@@ -8,6 +8,7 @@ import 'models.dart';
 import 'theme.dart';
 import 'ui_helpers.dart';
 import 'widgets.dart';
+import 'demo_panel.dart';
 
 class MachinePage extends StatefulWidget {
   const MachinePage(this.m, {super.key});
@@ -246,6 +247,7 @@ class _MachinePageState extends State<MachinePage> {
           ),
           body: ListView(padding: const EdgeInsets.all(16), children: [
             SyncBanner(m),
+            if (m.isDemo) DemoPanel(m),
             if (!m.isReady || !m.hasStatus) _connectCard() else ..._control(),
           ]),
         );

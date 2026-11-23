@@ -75,6 +75,7 @@ class MachineListPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Mesin saya'),
+        centerTitle: false,
         actions: [
           IconButton(tooltip: 'Riwayat order', icon: const Icon(Icons.receipt_long), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryPage()))),
           const ThemeToggle(),

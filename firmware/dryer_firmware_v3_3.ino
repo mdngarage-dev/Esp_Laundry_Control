@@ -42,6 +42,7 @@
  *   SAVE                         simpan ke flash (SYNC). Tanpa SAVE, perubahan hilang saat restart
  *   LOAD                         buang perubahan yang belum disimpan
  *   DEFAULTS                     kembali ke nilai pabrik (PIN dan nama tetap) lalu simpan
+ *   ORDER <kode> / ORDERCLR      nomor order laundry (A-Z a-z 0-9 - _ ., maks 31). Jika order_req=1, program HANYA bisa mulai setelah ORDER (berlaku order_ttl detik)
  *   RING <p1..p9>                urutan program di knob (permutasi 1..9). Putar kanan dari OFF = p1, lalu p2, ...; putar kiri dari OFF = p9
  *   NAME <teks>                  nama mesin (1-23 karakter ASCII, tanpa koma), tersimpan permanen setelah SAVE
  * Balasan: "OK,<perintah>" atau "ERR,<perintah>,<alasan>"
@@ -82,13 +83,13 @@
 #define HAS_BLE2902 1
 #endif
 
-#define FW_VERSION "3.1"
+#define FW_VERSION "3.3"
 #define MACHINE_TYPE "DRYER"
 #define ENC_REVERSE 0         // ganti 1 kalau putar kanan malah ke 30 MINS
 #define ENC_STEPS_PER_DETENT 4
 #define OLED_ADDR 0x3C
 #define DOOR_DEBOUNCE_MS 150
-#define CFG_MAGIC 0xD17E0310UL   // struct berubah di v3.1: setting lama di flash otomatis reset ke default
+#define CFG_MAGIC 0xD17E0320UL   // struct berubah di v3.1: setting lama di flash otomatis reset ke default
 
 // ===================== PIN (netlist PCB1) =====================
 const uint8_t PIN_RELAY_SPARE = 12;   // RLY1 CN3 (tidak dipakai)
@@ -104,8 +105,10 @@ const uint8_t PIN_SDA = 23, PIN_SCL = 18;
 
 // ===================== PARAMETER TETAP =====================
 const float    NTC_R0 = 10000.0f, VREF_MV = 3300.0f;
-const uint32_t SELECT_IDLE_MS = 60000UL, DONE_SHOW_MS = 8000UL;
-const uint32_t DOOR_RESUME_MS = 2000UL, PAUSE_TIMEOUT_MS = 600000UL, FAULT_COOL_MS = 300000UL;
+#define SELECT_IDLE_MS ((uint32_t)cfg.selectIdleS * 1000UL)   // semua bisa diubah dari aplikasi
+#define DONE_SHOW_MS ((uint32_t)cfg.doneShowS * 1000UL)
+#define PAUSE_TIMEOUT_MS ((uint32_t)cfg.pauseTimeoutS * 1000UL)
+const uint32_t DOOR_RESUME_MS = 2000UL, FAULT_COOL_MS = 300000UL;
 const uint32_t HOLD_STOP_MS = 2000UL, HOLD_EMERG_MS = 5000UL, HOLD_OFF_SELECT_MS = 1500UL;
 
 // ===================== KONFIGURASI (disimpan di flash/NVS) =====================
@@ -127,8 +130,8 @@ const uint8_t RING_N = 10;       // cincin knob: 0 = OFF, 1..9 = program
 
 struct Cfg {
   uint32_t magic;
-  uint8_t doorAutoResume, remoteStart, maxRetry, ignOffAfterProof, stopCoolTemp;
-  uint16_t ignWarmS, prestartS, proofS, purgeS, stopCoolS;
+  uint8_t doorAutoResume, remoteStart, maxRetry, ignOffAfterProof, stopCoolTemp, orderReq;
+  uint16_t ignWarmS, prestartS, proofS, purgeS, stopCoolS, selectIdleS, pauseTimeoutS, doneShowS, orderTtlS;
   uint32_t pin;
   float ntcOffset, ntcBeta, tHard, hyst, proofRise;
   ProgCfg prog[9];
@@ -146,6 +149,11 @@ const Param PARAMS[] = {
   {"retry",         PT_U8,  &cfg.maxRetry,        0, 3},
   {"ign_off_proof", PT_U8,  &cfg.ignOffAfterProof, 0, 1},
   {"stopcool_t",    PT_U8,  &cfg.stopCoolTemp,    30, 60},
+  {"select_idle",   PT_U16, &cfg.selectIdleS,     30, 600},
+  {"pause_timeout", PT_U16, &cfg.pauseTimeoutS,   60, 3600},
+  {"done_show",     PT_U16, &cfg.doneShowS,       3, 60},
+  {"order_req",     PT_U8,  &cfg.orderReq,        0, 1},
+  {"order_ttl",     PT_U16, &cfg.orderTtlS,       60, 3600},
   {"ign_warm",      PT_U16, &cfg.ignWarmS,        20, 90},
   {"prestart",      PT_U16, &cfg.prestartS,       5, 60},
   {"proof",         PT_U16, &cfg.proofS,          15, 60},
@@ -181,6 +189,7 @@ void cfgDefaults() {
   cfg.magic = CFG_MAGIC; cfg.doorAutoResume = 1; cfg.remoteStart = 0; cfg.maxRetry = 1; cfg.ignOffAfterProof = 0; cfg.stopCoolTemp = 45;
   cfg.ignWarmS = 40; cfg.prestartS = 10; cfg.proofS = 40; cfg.purgeS = 60; cfg.stopCoolS = 180; cfg.pin = 123456;
   cfg.ntcOffset = 0; cfg.ntcBeta = 3950; cfg.tHard = 80; cfg.hyst = 7; cfg.proofRise = 2;
+  cfg.selectIdleS = 60; cfg.pauseTimeoutS = 600; cfg.doneShowS = 8; cfg.orderReq = 0; cfg.orderTtlS = 600;
   memcpy(cfg.prog, DEF_PROGS, sizeof(DEF_PROGS));
   const uint8_t defRing[9] = {9, 8, 7, 6, 5, 4, 3, 2, 1};   // EXTRA DRY, TOWELS, IRON DRY, JEANS, AIRING, 2,5 JAM, 2 JAM, 1 JAM, 30 MINS
   memcpy(cfg.ring, defRing, 9);
@@ -257,6 +266,7 @@ uint32_t totalMs = 0, runMs = 0, lastTick = 0, motorOnAt = 0, heatT = 0, heatOff
 bool motorOn = false, gasOn = false, ignOn = false, proven = false, oledOn = false;
 uint8_t retries = 0; float tExh = 25.0f, tRaw = 25.0f, ntcOhm = 0, tMin = 0; bool sensorOk = false; uint8_t badReads = 0;
 uint32_t lastLowMs = 0; bool doorClosed = false;
+char orderNo[32] = "", dispText[48] = ""; bool orderOk = false; uint32_t orderAt = 0;   // nomor order laundry (hasil scan barcode di aplikasi)
 
 const ProgCfg& prog() { return cfg.prog[(ringIdx ? ringIdx : 1) - 1]; }
 const char* progName() { return PNAMES[(ringIdx ? ringIdx : 1) - 1]; }
@@ -331,6 +341,15 @@ const char* heatText() {
   if (runMs + coolMsNow() >= totalMs) return "PENDINGINAN";
   switch (heat) { case H_WARM: return "IGNITER MEMANAS"; case H_BURN: return gasOn ? "GAS NYALA" : "GAS MATI"; case H_PURGE: return "COBA LAGI"; default: return "GAS MATI"; }
 }
+void marquee(int y, const char* s, uint32_t now) {      // satu baris teks kecil; berjalan ke samping jika lebih lebar dari layar
+  int w = strlen(s) * 6;
+  if (w <= 128) { txt(0, y, 1, s, true); return; }
+  int total = w + 30;                                     // jeda kosong antar putaran
+  int off = (int)((now / 45) % (uint32_t)total);
+  oled.setTextSize(1); oled.setTextWrap(false);
+  oled.setCursor(-off, y); oled.print(s);
+  oled.setCursor(total - off, y); oled.print(s);
+}
 void drawUI(uint32_t now, uint32_t held) {
   char b[24]; bool big;
   oled.clearDisplay(); oled.setTextColor(SSD1306_WHITE);
@@ -346,7 +365,9 @@ void drawUI(uint32_t now, uint32_t held) {
       else {
         txt(0, 16, 2, progName(), true);
         if (prog().minutes >= 60) sprintf(b, "%u JAM %02u MENIT", prog().minutes / 60, prog().minutes % 60); else sprintf(b, "%u MENIT", prog().minutes);
-        txt(0, 38, 1, b, true); txt(0, 56, 1, "TEKAN = MULAI", true);
+        txt(0, 38, 1, b, true);
+        if (cfg.orderReq && !orderOk) txt(0, 56, 1, "SCAN BARCODE DI HP", true);
+        else { if (orderOk) marquee(47, dispText, now); txt(0, 56, 1, "TEKAN = MULAI", true); }
       }
       break;
     case S_RUN: case S_PAUSE_MAN: case S_PAUSE_DOOR: {
@@ -354,7 +375,8 @@ void drawUI(uint32_t now, uint32_t held) {
       if (bleConn) oled.fillCircle(90, 3, 2, SSD1306_WHITE);
       if (sensorOk) { sprintf(b, "%dC", (int)(tExh + 0.5f)); txt(128 - strlen(b) * 6, 0, 1, b); }
       uint32_t rem = totalMs > runMs ? (totalMs - runMs + 999) / 1000 : 0; fmtTime(b, rem, big);
-      txt(0, 16, big ? 3 : 2, b, true);
+      if (dispText[0]) marquee(9, dispText, now);
+      txt(0, dispText[0] ? 19 : 16, big ? 3 : 2, b, true);
       if (st == S_PAUSE_DOOR) {
         if (!doorClosed) txt(0, 46, 1, "PINTU TERBUKA! TUTUP", true);
         else if (cfg.doorAutoResume) txt(0, 46, 1, "MELANJUTKAN...", true);
@@ -373,11 +395,12 @@ void drawUI(uint32_t now, uint32_t held) {
 }
 
 // ===================== TRANSISI =====================
-void goOff() { allOff(); beepStop(); st = S_OFF; oledPower(false); }
-void emergencyOff() { allOff(); beepStop(); BEEP(P_EMERG); st = S_OFF; oledPower(false); }
+void goOff() { allOff(); beepStop(); st = S_OFF; oledPower(false); orderOk = false; orderNo[0] = 0; dispText[0] = 0; }
+void emergencyOff() { allOff(); beepStop(); BEEP(P_EMERG); st = S_OFF; oledPower(false); orderOk = false; orderNo[0] = 0; dispText[0] = 0; }
 void powerOn(uint32_t now) { st = S_SELECT; idleT = now; oledPower(true); }
 void doFault(uint8_t code) { heatStop(); faultCode = code; st = S_FAULT; stopEnd = millis() + FAULT_COOL_MS; BEEP(P_FAULT); txPush("E,FAULT,%u", code); }
 bool startRun(uint32_t now) {
+  if (cfg.orderReq && !orderOk) { BEEP(P_NO); txPush("E,ORDER_REQUIRED"); return false; }   // wajib scan barcode order dulu
   if (!doorClosed) { BEEP(P_NO); return false; }
   if (prog().heat && !sensorOk) { BEEP(P_NO); return false; }
   totalMs = (uint32_t)prog().minutes * 60000UL; runMs = 0; lastTick = now; retries = 0; lastRing = ringIdx;
@@ -394,7 +417,7 @@ void stopAndCool(uint32_t now) {
   if (prog().heat && sensorOk && tExh > cfg.stopCoolTemp && doorClosed) { st = S_STOPCOOL; stopEnd = now + (uint32_t)cfg.stopCoolS * 1000UL; setMotor(true); }
   else goOff();
 }
-void finishRun(uint32_t now) { heatStop(); setMotor(false); st = S_DONE; stateT = now; beepStop(); BEEP(P_DONE); txPush("E,DONE"); }
+void finishRun(uint32_t now) { heatStop(); setMotor(false); st = S_DONE; stateT = now; beepStop(); BEEP(P_DONE); txPush("E,DONE,%s", orderNo); orderOk = false; }
 void ignitionFail(uint32_t now) { setGas(false); setIgn(false); proven = false; if (++retries > cfg.maxRetry) { doFault(3); return; } heat = H_PURGE; heatT = now; }
 
 // ===================== KONTROL GAS =====================
@@ -511,6 +534,7 @@ void sendStatus() {
          (unsigned)heat, (unsigned)gasOn, (unsigned)ignOn, (unsigned)motorOn, (unsigned)doorClosed,
          (unsigned)faultCode, (unsigned)sensorOk, (unsigned)cool, (unsigned)retries, (unsigned)cfgDirty);
 }
+void sendOrder() { txPush("O,%u,%s", (unsigned)orderOk, orderNo); }
 void sendCfg() {
   txPush("V,%s,%s", FW_VERSION, MACHINE_TYPE);
   for (const Param& q : PARAMS) {
@@ -522,6 +546,7 @@ void sendCfg() {
     txPush("P,%d,%s,%u,%u,%u,%u,%u,%u", i + 1, PNAMES[i], (unsigned)p.minutes, (unsigned)p.heat, (unsigned)p.onS, (unsigned)p.offS, (unsigned)p.tCut, (unsigned)p.coolS);
   }
   txPush("N,%s", cfg.name);
+  sendOrder();
   txPush("R,%u,%u,%u,%u,%u,%u,%u,%u,%u", cfg.ring[0], cfg.ring[1], cfg.ring[2], cfg.ring[3], cfg.ring[4], cfg.ring[5], cfg.ring[6], cfg.ring[7], cfg.ring[8]);   // R = akhir dump setting
   sendStatus();
 }
@@ -566,7 +591,7 @@ void handleCmd(char* line, uint32_t now) {
   if (!strcmp(cmd, "START")) {
     if (!cfg.remoteStart) { er(cmd, "remote_start_off"); return; }
     if (st != S_SELECT || ringIdx == 0) { er(cmd, "not_selected"); return; }
-    if (startRun(now)) ok(cmd); else er(cmd, "door_or_sensor");
+    if (startRun(now)) ok(cmd); else er(cmd, (cfg.orderReq && !orderOk) ? "order_required" : "door_or_sensor");
     return;
   }
   if (!strcmp(cmd, "PAUSE")) { if (st == S_RUN) { pauseRun(S_PAUSE_MAN, now); ok(cmd); } else er(cmd, "state"); return; }
@@ -597,6 +622,18 @@ void handleCmd(char* line, uint32_t now) {
     if (!cfgSane()) { cfg.prog[i - 1] = old; er(cmd, "constraint"); return; }
     cfgDirty = true; ok(cmd); return;
   }
+  if (!strcmp(cmd, "ORDER")) {
+    if (n < 1 || strlen(tok[0]) > 31) { er(cmd, "arg"); return; }
+    if (!(st == S_OFF || st == S_SELECT)) { er(cmd, "busy"); return; }
+    for (const char* c = tok[0]; *c; c++) if (!isalnum((unsigned char)*c) && *c != '-' && *c != '_' && *c != '.') { er(cmd, "arg"); return; }
+    strncpy(orderNo, tok[0], 31); orderNo[31] = 0; orderOk = true; orderAt = now;
+    dispText[0] = 0;                                       // teks layar = sisa argumen (mis. nama pelanggan); kosong -> nomor order saja
+    for (int k = 1; k < n; k++) { if (k > 1 && strlen(dispText) < 46) strcat(dispText, " "); strncat(dispText, tok[k], 47 - strlen(dispText)); }
+    if (!dispText[0]) strncpy(dispText, orderNo, 47);
+    for (char* c = dispText; *c; c++) if ((uint8_t)*c < 0x20 || (uint8_t)*c > 0x7E) *c = '?';
+    ok(cmd); sendOrder(); return;
+  }
+  if (!strcmp(cmd, "ORDERCLR")) { orderOk = false; orderNo[0] = 0; dispText[0] = 0; ok(cmd); sendOrder(); return; }
   if (!strcmp(cmd, "RING")) {
     if (n < 9) { er(cmd, "arg"); return; }
     if (!idleState()) { er(cmd, "busy"); return; }
@@ -657,7 +694,7 @@ void bleTick(uint32_t now) {
   while (rxPop(line)) handleCmd(line, now);
   if (needAdv && now - advAt > 300) { needAdv = false; BLEDevice::startAdvertising(); }
   static uint32_t tS = 0; static uint8_t lastSt = 255;
-  if (bleConn && ((uint8_t)st != lastSt || now - tS >= 1000)) { tS = now; sendStatus(); }
+  if (bleConn && ((uint8_t)st != lastSt || now - tS >= 1000)) { tS = now; sendStatus(); sendOrder(); }
   lastSt = (uint8_t)st;
   txPump(now);
 }
@@ -748,6 +785,7 @@ void loop() {
   if (st == S_DONE && now - stateT >= DONE_SHOW_MS) goOff();
   if (st == S_SELECT && now - idleT >= SELECT_IDLE_MS) { BEEP(P_PRESS); goOff(); }
   if (gasOn && !(motorOn && doorClosed && sensorOk)) heatStop();   // pengaman umum
+  if (orderOk && (st == S_OFF || st == S_SELECT) && now - orderAt > (uint32_t)cfg.orderTtlS * 1000UL) { orderOk = false; orderNo[0] = 0; dispText[0] = 0; txPush("E,ORDER_EXPIRED"); }
   heatTick(now);
 
   int8_t d = encRead(); if (d) onTurn(d, now);

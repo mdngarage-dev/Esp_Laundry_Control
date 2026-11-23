@@ -46,6 +46,7 @@ ThemeData buildTheme(Brightness b) {
   final p = b == Brightness.dark ? _dark : _light;
   return ThemeData(
     useMaterial3: true,
+    fontFamily: 'Pastrami',
     brightness: b,
     colorSchemeSeed: p.accent,
     scaffoldBackgroundColor: p.bg,

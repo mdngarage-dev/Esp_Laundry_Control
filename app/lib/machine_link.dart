@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
-
+import 'demo_device.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
@@ -70,6 +70,28 @@ class MachineLink extends ChangeNotifier {
   bool _busy = false, _firstLoad = true;
   final List<int> _ohmHist = [];
 
+  DemoDevice? _demo;
+  bool get isDemo => profile.deviceId == 'DEMO';
+  DemoDevice? get demo => _demo;
+
+  Future<void> _connectDemo() async {
+    lastError = null;
+    phase = LinkPhase.connecting;
+    notifyListeners();
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    _demo = DemoDevice(profile.type, (line) => _onData(utf8.encode(line)));
+    phase = LinkPhase.authing;
+    notifyListeners();
+    final r = await send('AUTH ${profile.pin}');
+    if (!r.ok) {
+      lastError = 'PIN demo salah';
+      await disconnect();
+      return;
+    }
+    phase = LinkPhase.ready;
+    notifyListeners();
+    send('GET', expectReply: false);
+  }
   // ---------------- getter ----------------
   bool get isReady => phase == LinkPhase.ready;
   bool get isDryer => profile.type == 'dryer';
@@ -108,6 +130,12 @@ class MachineLink extends ChangeNotifier {
       return;
     }
     if (phase != LinkPhase.idle) return;
+
+    if (id == 'DEMO') {
+      await _connectDemo();
+      return;
+    }
+
     lastError = null;
     phase = LinkPhase.connecting;
     notifyListeners();
@@ -168,6 +196,8 @@ class MachineLink extends ChangeNotifier {
   }
 
   void _cleanup() {
+    _demo?.stop();
+    _demo = null;
     _notifySub?.cancel();
     _connSub?.cancel();
     _notifySub = null;
@@ -206,13 +236,17 @@ class MachineLink extends ChangeNotifier {
     _busy = true;
     while (_queue.isNotEmpty) {
       final p = _queue.removeAt(0);
-      if (_rx == null) {
+      if (_rx == null && _demo == null) {
         p.c.complete(const Reply(false, 'terputus'));
         continue;
       }
       _waiting = p;
       try {
-        await _rx!.write(utf8.encode(p.cmd));
+                if (_demo != null) {
+          _demo!.handle(p.cmd);
+        } else {
+          await _rx!.write(utf8.encode(p.cmd));
+        }
       } catch (e) {
         if (!p.c.isCompleted) p.c.complete(Reply(false, '$e'));
         _waiting = null;

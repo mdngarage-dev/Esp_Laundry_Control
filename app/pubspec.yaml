@@ -19,6 +19,12 @@ dependencies:
 
 flutter:
   uses-material-design: true
+  fonts:
+    - family: Pastrami
+      fonts:
+        - asset: assets/font/Font.ttf
+          weight: 700
+
 flutter_launcher_icons:
   android: "launcher_icon"
   ios: true
