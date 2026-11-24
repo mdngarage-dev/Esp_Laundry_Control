@@ -12,6 +12,7 @@ import 'theme.dart';
 import 'ui_helpers.dart';
 import 'washer_calib_page.dart';
 import 'widgets.dart';
+import 'tutorial_page.dart';
 
 class MachineSettingsPage extends StatelessWidget {
   const MachineSettingsPage(this.m, {super.key});
@@ -108,7 +109,11 @@ class MachineSettingsPage extends StatelessWidget {
                 : null),
             _item(context, Icons.link, m.profile.deviceId == null ? 'Pasangkan ESP32' : 'Ganti ESP32 yang dipasangkan', m.profile.deviceId ?? 'Belum dipasangkan', () => _go(context, PairPage(m))),
             if (m.fwVersion.isNotEmpty) Padding(padding: const EdgeInsets.all(8), child: Text('Firmware ${m.fwVersion}  •  ${m.devType}', style: TextStyle(color: p.sub, fontSize: 12))),
-            _item(context, Icons.delete, 'Hapus mesin dari aplikasi', 'Setting di ESP32 tidak ikut terhapus', () async {
+            
+            _item(context, Icons.menu_book, 'Panduan pemasangan soket',
+                m.isDryer ? 'Sambungan soket untuk dryer' : 'Sambungan soket untuk mesin cuci',
+                () => _go(context, TutorialPage(type: m.profile.type))),
+           _item(context, Icons.delete, 'Hapus mesin dari aplikasi', 'Setting di ESP32 tidak ikut terhapus', () async {
               final ok = await confirm(context, 'Hapus "${m.profile.name}"?', 'Setting di ESP32 tidak ikut terhapus.', ok: 'HAPUS');
               if (!ok) return;
               await store.remove(m);

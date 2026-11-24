@@ -10,6 +10,7 @@ import 'machine_link.dart';
 import 'order_service.dart';
 import 'profile.dart';
 import 'ui_helpers.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 /// Daftar semua mesin (disimpan di HP) + scan BLE untuk menambah/memasangkan ESP32.
 class MachineStore extends ChangeNotifier {
@@ -157,6 +158,14 @@ class MachineStore extends ChangeNotifier {
     scanning = true;
     notifyListeners();
     try {
+      final perm = await [Permission.bluetoothScan, Permission.bluetoothConnect].request();
+      if (perm[Permission.bluetoothScan] != PermissionStatus.granted ||
+          perm[Permission.bluetoothConnect] != PermissionStatus.granted) {
+        scanError = 'Izin "Perangkat sekitar" ditolak. Aktifkan di Pengaturan > Aplikasi > Izin.';
+        scanning = false;
+        notifyListeners();
+        return;
+      }
       final st = await FlutterBluePlus.adapterState.first;
       if (st != BluetoothAdapterState.on) {
         scanError = 'Bluetooth belum aktif';

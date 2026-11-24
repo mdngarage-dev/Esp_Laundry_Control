@@ -16,6 +16,7 @@ dependencies:
 
   firebase_core: ^4.10.0 
   cloud_firestore: ^6.5.0
+  permission_handler: ^12.0.1
 
 flutter:
   uses-material-design: true
@@ -24,6 +25,9 @@ flutter:
       fonts:
         - asset: assets/font/Font.ttf
           weight: 700
+
+  assets:
+    - assets/tutorial/
 
 flutter_launcher_icons:
   android: "launcher_icon"
